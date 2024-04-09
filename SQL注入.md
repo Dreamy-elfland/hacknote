@@ -342,7 +342,7 @@ GB2312、GBK、BIG5、GB18030、Shift\_JIS 等这些都是常说的宽字节，�
 
 ### SQL 注入漏洞常见过滤方法
 
-> 以PHP为例
+> 以 PHP 为例
 
 * intval、addslashes、mysql\_real\_escape
 * mysqli\_escape\_string、mysqli\_real\_escape\_string、mysqli::escape\_string
